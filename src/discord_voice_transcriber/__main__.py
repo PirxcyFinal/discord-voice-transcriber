@@ -32,7 +32,8 @@ def main() -> None:
     bot = build_bot(settings)
     if args.check:
         print(
-            f"Configuration valid: provider={settings.stt_provider}, "
+            f"Configuration valid: provider={bot.transcriber.provider} "
+            f"(requested={settings.stt_provider}), "
             f"model={bot.transcriber.model}, guild={settings.discord_guild_id or 'global'}"
         )
         return

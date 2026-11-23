@@ -9,7 +9,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Settings:
     discord_token: str
-    stt_provider: str = "openai"
+    stt_provider: str = "auto"
     stt_model: str | None = None
     stt_language: str | None = None
     discord_guild_id: int | None = None
@@ -22,7 +22,7 @@ class Settings:
         guild = os.getenv("DISCORD_GUILD_ID", "").strip()
         return cls(
             discord_token=token,
-            stt_provider=os.getenv("STT_PROVIDER", "openai").strip().lower(),
+            stt_provider=os.getenv("STT_PROVIDER", "auto").strip().lower() or "auto",
             stt_model=os.getenv("STT_MODEL") or None,
             stt_language=os.getenv("STT_LANGUAGE") or None,
             discord_guild_id=int(guild) if guild else None,

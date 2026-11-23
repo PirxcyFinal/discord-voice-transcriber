@@ -15,7 +15,8 @@ The Discord RTP/DAVE/Opus receiving path is adapted from
 - Handles Discord transport encryption, DAVE transitions, and Opus decoding.
 - Buffers audio separately for every speaker; tracks are never mixed.
 - Splits speech after 1.5 seconds of silence.
-- Uses OpenAI transcription by default, or optional local `faster-whisper`.
+- Uses the same speech-to-text models as Hermes Agent: `whisper-1` (OpenAI) or
+  `base` (local `faster-whisper`), resolved local-first like Hermes.
 - Posts transcript lines as `**Display name:** what they said`.
 - `/leave` flushes pending utterances, disconnects, and cleans up.
 - Deletes temporary WAV files after each transcription. Raw audio is not retained.
@@ -26,7 +27,7 @@ The Discord RTP/DAVE/Opus receiving path is adapted from
 - [`uv`](https://docs.astral.sh/uv/)
 - Discord bot token
 - `libopus` (`brew install opus` on macOS; your distribution's Opus package on Linux)
-- OpenAI API key for the default provider, **or** the optional local model extra
+- An OpenAI API key, **or** the optional local model extra (`faster-whisper`)
 
 ## Discord application setup
 
@@ -59,7 +60,7 @@ Edit `.env`:
 ```dotenv
 DISCORD_BOT_TOKEN=your-discord-bot-token
 OPENAI_API_KEY=your-openai-api-key
-STT_PROVIDER=openai
+STT_PROVIDER=auto
 # Optional: faster slash-command sync while developing
 DISCORD_GUILD_ID=your-server-id
 ```
@@ -102,11 +103,14 @@ Set:
 
 ```dotenv
 STT_PROVIDER=local
-STT_MODEL=small
+# Optional; `base` is the Hermes default and is used when STT_MODEL is blank.
+STT_MODEL=base
 ```
 
 The first run downloads the selected faster-whisper model. Local inference can
-be CPU-intensive. OpenAI is the lighter default for the bot host.
+be CPU-intensive; OpenAI is lighter on the bot host. With `STT_PROVIDER=auto`
+the local backend is preferred whenever `faster-whisper` is installed, which is
+the same order Hermes Agent uses.
 
 ## Privacy and consent
 
@@ -131,13 +135,28 @@ Audio handling:
 
 - `DISCORD_BOT_TOKEN` — required Discord bot token.
 - `DISCORD_GUILD_ID` — optional development server for immediate command sync.
-- `STT_PROVIDER` — `openai` (default) or `local`.
-- `STT_MODEL` — optional model override. Defaults to
-  `gpt-4o-mini-transcribe` or local `small`.
+- `STT_PROVIDER` — `auto` (default), `openai`, or `local`. `auto` resolves
+  local-first and then OpenAI, matching Hermes Agent's STT provider detection.
+  An explicit value is always honoured with no silent cloud fallback.
+- `STT_MODEL` — optional model override. Defaults to the Hermes Agent values:
+  `whisper-1` for OpenAI and `base` for local.
 - `STT_LANGUAGE` — optional ISO-639-1 language code such as `en`.
 - `OPENAI_API_KEY` — required only for OpenAI STT.
 
 Secrets belong in `.env`, which is gitignored. Never commit tokens or API keys.
+
+### Model parity with Hermes Agent
+
+The defaults are taken from Hermes Agent's own STT configuration rather than
+chosen independently:
+
+- `stt.openai.model` → `whisper-1` (also Hermes' `DEFAULT_STT_MODEL` constant in
+  `tools/transcription_common.py`)
+- `stt.local.model` → `base` (also Hermes' `DEFAULT_LOCAL_MODEL`)
+- Provider order → explicit selection wins, otherwise local before cloud
+
+Other models Hermes accepts for OpenAI (`gpt-4o-mini-transcribe`,
+`gpt-4o-transcribe`) still work via `STT_MODEL` if you prefer them.
 
 ## Development
 
