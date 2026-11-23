@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "discord-voice-transcriber"
+version = "0.1.0"
+description = "A focused Discord bot that captures per-speaker voice audio and transcribes it."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "pirxcy" }]
+dependencies = [
+  "discord.py[voice]==2.7.1",
+  "openai>=2.24,<3",
+  "python-dotenv>=1.1,<2",
+]
+
+[project.optional-dependencies]
+local = ["faster-whisper==1.2.1"]
+test = [
+  "pytest>=8.3,<10",
+  "pytest-asyncio>=0.25,<2",
+]
+
+[project.scripts]
+discord-voice-transcriber = "discord_voice_transcriber.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/discord_voice_transcriber"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
