@@ -61,9 +61,10 @@ DISCORD_BOT_TOKEN=... uv run discord-voice-transcriber
 ```
 
 `faster-whisper` runs on your own hardware, no API key, no audio leaving the
-host. But the **Discord bot token is still mandatory** — that is platform auth,
-not a speech key. Do not tell a user the project is "fully keyless"; it is
-keyless for *speech-to-text only*.
+host. The weights are open and fetched once from Hugging Face, so there is no
+per-minute cost either. But the **Discord bot token is still mandatory** — that
+is platform auth, not a speech key. Do not tell a user the project is "fully
+keyless"; it is keyless for *speech-to-text only*.
 
 If neither a local backend nor a key is available, startup fails loudly with an
 actionable message. It does not silently degrade.
@@ -138,13 +139,34 @@ REKEY_FAILURE_STREAK = 25     # consecutive decrypt failures → refresh keys
 
 `SAMPLE_RATE` and `CHANNELS` are dictated by Discord. Do not "optimise" them.
 
-### Model parity with Hermes Agent
+### Model selection
 
-Defaults are copied from Hermes' own STT config, not chosen independently:
+Two constants in `transcription.py`, and the difference between them matters:
 
-- `openai` → `whisper-1` (Hermes `stt.openai.model` / `DEFAULT_STT_MODEL`)
-- `local` → `base` (Hermes `stt.local.model` / `DEFAULT_LOCAL_MODEL`)
-- Provider order → explicit choice wins; otherwise **local before cloud**
+| Constant | Value | Meaning |
+| --- | --- | --- |
+| `HERMES_DEFAULT_MODELS` | `{"local": "base", "openai": "whisper-1"}` | A **record of what Hermes uses**. Do not change it to express a preference; it documents upstream. |
+| `DEFAULT_MODELS` | `{"local": RECOMMENDED_LOCAL_MODEL, "openai": "whisper-1"}` | What **this project** actually defaults to. `Transcriber` reads this one. |
+
+`RECOMMENDED_LOCAL_MODEL` is `Systran/faster-distil-whisper-small.en`. The cloud
+default stays at Hermes parity; only the local default diverges, and it diverges
+because it was measured, not assumed. Provider order is unchanged: explicit
+choice wins, otherwise **local before cloud**.
+
+If you are changing the default model, benchmark it first — accuracy *and* speed,
+on speech resembling the real workload (acronyms, names, numbers, jargon), not
+on a clean sentence like "the quick brown fox", which every model gets right and
+which therefore tells you nothing. Measured results are in the README table and
+in the comment above `RECOMMENDED_LOCAL_MODEL`. Two findings worth keeping:
+distillation beat raw size (336 MB more accurate than 818 MB, and 5x faster),
+and `tiny.en` mangles exactly the technical acronyms this project deals in.
+
+**English-only defaults are a trap, so the code names it.** Checkpoints ending
+`.en` do not refuse other languages; they emit confident English nonsense over
+them, which no exception will reveal. `is_english_only_model()` detects the
+suffix and `--check` prints a reminder. If you add a model-selection feature,
+preserve that warning — silence here produces plausible, wrong transcripts.
+`STT_MODEL=base` restores both Hermes parity and multilingual support.
 
 If asked to "use the same model as Hermes", resolve it from Hermes itself rather
 than from memory or documentation:

@@ -6,8 +6,11 @@ import pytest
 
 from discord_voice_transcriber import transcription
 from discord_voice_transcriber.transcription import (
+    DEFAULT_MODELS,
     HERMES_DEFAULT_MODELS,
+    RECOMMENDED_LOCAL_MODEL,
     Transcriber,
+    is_english_only_model,
     resolve_provider,
 )
 
@@ -57,13 +60,39 @@ def test_openai_default_model_matches_hermes():
     assert Transcriber(provider="openai", openai_client=FakeClient()).model == "whisper-1"
 
 
-def test_local_default_model_matches_hermes():
-    assert Transcriber(provider="local").model == "base"
+def test_local_default_is_the_benchmarked_distil_model():
+    """We deliberately diverge from Hermes' ``base`` for the local provider.
+    Benchmarked on one 20s clip: this model beat ``base`` on accuracy while still
+    running ~25x realtime, so the extra 190MB buys accuracy we can measure.
+    """
+    assert RECOMMENDED_LOCAL_MODEL == "Systran/faster-distil-whisper-small.en"
+    assert DEFAULT_MODELS["local"] == RECOMMENDED_LOCAL_MODEL
+    assert Transcriber(provider="local").model == RECOMMENDED_LOCAL_MODEL
+
+
+def test_openai_default_still_matches_hermes_exactly():
+    """Only the local default diverges; the cloud default stays at parity."""
+    assert DEFAULT_MODELS["openai"] == HERMES_DEFAULT_MODELS["openai"]
 
 
 def test_explicit_model_overrides_hermes_default():
     transcriber = Transcriber(provider="openai", model="gpt-4o-transcribe", openai_client=FakeClient())
     assert transcriber.model == "gpt-4o-transcribe"
+
+
+@pytest.mark.parametrize(
+    ("model", "english_only"),
+    [
+        ("Systran/faster-distil-whisper-small.en", True),
+        ("tiny.en", True),
+        ("base", False),
+        ("Systran/faster-whisper-small", False),
+        ("whisper-1", False),
+    ],
+)
+def test_english_only_models_are_detected(model: str, english_only: bool):
+    """The default is English-only, so callers must be able to warn about it."""
+    assert is_english_only_model(model) is english_only
 
 
 def test_auto_provider_prefers_local_like_hermes(monkeypatch):
@@ -72,7 +101,7 @@ def test_auto_provider_prefers_local_like_hermes(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "placeholder")
 
     assert resolve_provider("auto") == "local"
-    assert Transcriber(provider="auto").model == "base"
+    assert Transcriber(provider="auto").model == RECOMMENDED_LOCAL_MODEL
 
 
 def test_auto_provider_falls_back_to_openai_without_local_backend(monkeypatch):

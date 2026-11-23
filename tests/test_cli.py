@@ -55,4 +55,30 @@ def test_check_reports_resolved_and_requested_provider(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "provider=local" in output
     assert "requested=auto" in output
-    assert "model=base" in output
+    assert f"model={transcription.RECOMMENDED_LOCAL_MODEL}" in output
+
+
+def test_check_warns_that_the_default_model_is_english_only(monkeypatch, capsys):
+    """The default is an `.en` model: non-English speech returns confident nonsense,
+    not an error, so the tradeoff must be visible at preflight and not only in docs.
+    """
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "placeholder-token")
+    monkeypatch.setattr(transcription, "_local_backend_available", lambda: True)
+    monkeypatch.setattr("sys.argv", ["discord-voice-transcriber", "--check"])
+
+    cli.main()
+
+    output = capsys.readouterr().out
+    assert "English-only" in output
+    assert "STT_MODEL=base" in output
+
+
+def test_check_does_not_warn_for_a_multilingual_model(monkeypatch, capsys):
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "placeholder-token")
+    monkeypatch.setenv("STT_MODEL", "base")
+    monkeypatch.setattr(transcription, "_local_backend_available", lambda: True)
+    monkeypatch.setattr("sys.argv", ["discord-voice-transcriber", "--check"])
+
+    cli.main()
+
+    assert "English-only" not in capsys.readouterr().out

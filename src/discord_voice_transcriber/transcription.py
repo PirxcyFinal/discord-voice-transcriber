@@ -15,7 +15,40 @@ from .receiver import VoiceReceiver
 # ``base`` (faster-whisper) and ``stt.openai.model`` to ``whisper-1`` -- the same value as
 # Hermes' ``DEFAULT_STT_MODEL`` constant in ``tools/transcription_common.py``.
 HERMES_DEFAULT_MODELS = {"local": "base", "openai": "whisper-1"}
-SUPPORTED_PROVIDERS = frozenset(HERMES_DEFAULT_MODELS)
+
+# For the local provider we deliberately diverge from Hermes' ``base``. Benchmarked on a
+# ~20s clip of deliberately awkward speech (file paths, line numbers, a Discord user ID),
+# this distilled model was both more accurate than ``base`` and faster than plain
+# ``small.en``, at ~25x realtime -- far more headroom than live voice needs:
+#
+#   model                                   size    speed    rank
+#   Systran/faster-distil-whisper-small.en  336MB   24.9x    best accuracy
+#   Systran/faster-whisper-small.en         486MB   18.6x    worse, and bigger
+#   faster-whisper-large-v3-turbo-int8-ct2  818MB    4.9x    no better, 5x slower
+#   base (Hermes' default)                  148MB   54.2x    least accurate of these
+#
+# The tradeoff: ``.en`` models are English-only and answer non-English speech with
+# confident nonsense rather than an error -- see ``is_english_only_model``. Set
+# ``STT_MODEL=base`` (or any multilingual model) for non-English voice channels.
+RECOMMENDED_LOCAL_MODEL = "Systran/faster-distil-whisper-small.en"
+
+# This project's defaults. Only the local entry diverges from Hermes; the cloud default
+# stays pinned to Hermes' ``whisper-1`` so keyed deployments behave identically.
+DEFAULT_MODELS = {
+    "local": RECOMMENDED_LOCAL_MODEL,
+    "openai": HERMES_DEFAULT_MODELS["openai"],
+}
+SUPPORTED_PROVIDERS = frozenset(DEFAULT_MODELS)
+
+
+def is_english_only_model(model: str) -> bool:
+    """Whisper marks English-only checkpoints with an ``.en`` suffix.
+
+    Worth checking before transcribing: an English-only model does not reject other
+    languages, it hallucinates plausible English over them, which is far harder to
+    notice downstream than an outright failure.
+    """
+    return model.rsplit("/", 1)[-1].endswith(".en")
 
 # Whisper models always operate on 16 kHz mono audio.
 WHISPER_SAMPLE_RATE = 16_000
@@ -107,7 +140,7 @@ class Transcriber:
         temp_dir: str | Path | None = None,
     ) -> None:
         self.provider = resolve_provider(provider)
-        self.model = model or HERMES_DEFAULT_MODELS[self.provider]
+        self.model = model or DEFAULT_MODELS[self.provider]
         self.language = language
         self.temp_dir = Path(temp_dir) if temp_dir else None
         self._openai_client = openai_client

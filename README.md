@@ -35,8 +35,9 @@ cause of unattributed or misattributed transcripts.
 - Handles Discord transport encryption, DAVE transitions, and Opus decoding.
 - Buffers audio separately for every speaker; tracks are never mixed.
 - Splits speech after 1.5 seconds of silence.
-- Uses the same speech-to-text models as Hermes Agent: `whisper-1` (OpenAI) or
-  `base` (local `faster-whisper`), resolved local-first like Hermes.
+- Resolves speech-to-text local-first like Hermes Agent: `whisper-1` (OpenAI) or
+  a local `faster-whisper` model, defaulting to the benchmarked
+  `Systran/faster-distil-whisper-small.en`.
 - Posts transcript lines as `**Display name:** what they said`.
 - `/leave` flushes pending utterances, disconnects, and cleans up.
 - Deletes temporary WAV files after each transcription. Raw audio is not retained.
@@ -123,14 +124,50 @@ Set:
 
 ```dotenv
 STT_PROVIDER=local
-# Optional; `base` is the Hermes default and is used when STT_MODEL is blank.
-STT_MODEL=base
+# Optional; this is the default when STT_MODEL is blank.
+STT_MODEL=Systran/faster-distil-whisper-small.en
 ```
 
 The first run downloads the selected faster-whisper model. Local inference can
 be CPU-intensive; OpenAI is lighter on the bot host. With `STT_PROVIDER=auto`
 the local backend is preferred whenever `faster-whisper` is installed, which is
 the same order Hermes Agent uses.
+
+### Choosing a local model
+
+`STT_MODEL` accepts any faster-whisper size name or Hugging Face CTranslate2
+repository id. Measured on this project, on one ~20 s clip of deliberately
+awkward speech (file paths, a line number, a Discord user ID, technical jargon),
+on Apple Silicon CPU:
+
+| Model | Size | Speed | Accuracy rank |
+| --- | --- | --- | --- |
+| `Systran/faster-distil-whisper-small.en` **(default)** | 336 MB | 24.9x realtime | **best** |
+| `Systran/faster-whisper-small.en` | 486 MB | 18.6x realtime | 2nd |
+| `Zoont/faster-whisper-large-v3-turbo-int8-ct2` | 818 MB | 4.9x realtime | 2nd (tied) |
+| `base` | 148 MB | 54.2x realtime | 4th |
+| `rhasspy/faster-whisper-base-int8` | 80 MB | 51.5x realtime | 4th (tied) |
+| `Systran/faster-whisper-tiny.en` | 78 MB | 69.8x realtime | worst |
+
+Read that as a ranking, not as absolute error rates: it is one clip from one
+voice, and the scoring penalised correct digit formatting. Reproduce it with
+your own audio before trusting the ordering for your channel.
+
+What the numbers are good for:
+
+- **Distillation beats size here.** The 336 MB distilled model was more accurate
+  than the 818 MB turbo model while running roughly 5x faster. Reaching for the
+  biggest checkpoint is not an upgrade on this workload.
+- **`rhasspy/faster-whisper-base-int8` is free compression.** Identical accuracy
+  to plain `base` at half the disk; a good pick for small containers.
+- **Avoid `tiny.en`.** It mangled the acronyms that matter here (`SSRC`, `DAVE`),
+  and `base` is already far faster than live voice requires.
+
+> **The default is English-only.** Models with an `.en` suffix do not reject
+> other languages — they transcribe them as confident English nonsense, which is
+> much harder to spot than an outright error. For non-English voice channels set
+> `STT_MODEL=base` (or another multilingual model). `--check` prints a reminder
+> whenever the resolved model is English-only.
 
 ## Privacy and consent
 
@@ -158,22 +195,29 @@ Audio handling:
 - `STT_PROVIDER` — `auto` (default), `openai`, or `local`. `auto` resolves
   local-first and then OpenAI, matching Hermes Agent's STT provider detection.
   An explicit value is always honoured with no silent cloud fallback.
-- `STT_MODEL` — optional model override. Defaults to the Hermes Agent values:
-  `whisper-1` for OpenAI and `base` for local.
+- `STT_MODEL` — optional model override. Defaults to `whisper-1` for OpenAI and
+  `Systran/faster-distil-whisper-small.en` for local. See
+  [Choosing a local model](#choosing-a-local-model).
 - `STT_LANGUAGE` — optional ISO-639-1 language code such as `en`.
 - `OPENAI_API_KEY` — required only for OpenAI STT.
 
 Secrets belong in `.env`, which is gitignored. Never commit tokens or API keys.
 
-### Model parity with Hermes Agent
+### Relationship to Hermes Agent's defaults
 
-The defaults are taken from Hermes Agent's own STT configuration rather than
-chosen independently:
+The provider order and the cloud model come from Hermes Agent's own STT
+configuration rather than being chosen independently:
 
-- `stt.openai.model` → `whisper-1` (also Hermes' `DEFAULT_STT_MODEL` constant in
-  `tools/transcription_common.py`)
-- `stt.local.model` → `base` (also Hermes' `DEFAULT_LOCAL_MODEL`)
+- `stt.openai.model` → `whisper-1`, matched exactly (also Hermes'
+  `DEFAULT_STT_MODEL` constant in `tools/transcription_common.py`)
 - Provider order → explicit selection wins, otherwise local before cloud
+
+**The local model deliberately diverges.** Hermes uses `base`
+(`DEFAULT_LOCAL_MODEL`); this project defaults to
+`Systran/faster-distil-whisper-small.en` because it measured more accurate at
+ample speed for live voice — see the table above. Hermes' value is still
+recorded in code as `HERMES_DEFAULT_MODELS` and is one env var away:
+`STT_MODEL=base` restores full parity and multilingual support.
 
 Other models Hermes accepts for OpenAI (`gpt-4o-mini-transcribe`,
 `gpt-4o-transcribe`) still work via `STT_MODEL` if you prefer them.
@@ -188,8 +232,9 @@ DISCORD_BOT_TOKEN=... uv run discord-voice-transcriber
 ```
 
 With the `local` extra installed, `STT_PROVIDER=auto` resolves to `local` and
-runs faster-whisper `base` entirely on your machine. No `OPENAI_API_KEY` is
-read, and no audio leaves the host.
+runs faster-whisper entirely on your machine. No `OPENAI_API_KEY` is
+read, and no audio leaves the host. Model weights are open and downloaded once
+from Hugging Face; there is no per-minute cost.
 
 A Discord bot token is still required — that is Discord's own gateway
 authentication, not a speech-to-text key. So the bot is keyless for *transcription*,

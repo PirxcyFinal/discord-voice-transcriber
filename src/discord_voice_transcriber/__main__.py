@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 from .bot import VoiceTranscriberBot
 from .config import Settings
-from .transcription import Transcriber
+from .transcription import Transcriber, is_english_only_model
 
 
 def build_bot(settings: Settings) -> VoiceTranscriberBot:
@@ -41,6 +41,15 @@ def main() -> None:
             f"(requested={settings.stt_provider}), "
             f"model={bot.transcriber.model}, guild={settings.discord_guild_id or 'global'}"
         )
+        if is_english_only_model(bot.transcriber.model):
+            # Not an error: the default is English-only on purpose because it is the
+            # most accurate lightweight option. But it transcribes other languages as
+            # confident English nonsense rather than failing, so say so out loud.
+            print(
+                "Note: this model is English-only and will mistranscribe other "
+                "languages instead of erroring. Set STT_MODEL=base (or another "
+                "multilingual model) for non-English voice channels."
+            )
         return
     bot.run(settings.discord_token, log_handler=None)
 
