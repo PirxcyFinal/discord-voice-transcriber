@@ -17,6 +17,54 @@ from .receiver import VoiceReceiver
 HERMES_DEFAULT_MODELS = {"local": "base", "openai": "whisper-1"}
 SUPPORTED_PROVIDERS = frozenset(HERMES_DEFAULT_MODELS)
 
+# Whisper models always operate on 16 kHz mono audio.
+WHISPER_SAMPLE_RATE = 16_000
+
+
+def pcm_to_whisper_audio(
+    pcm_data: bytes,
+    *,
+    sample_rate: int = 48_000,
+    channels: int = 2,
+):
+    """Convert interleaved 16-bit PCM into a mono float32 array at 16 kHz.
+
+    This deliberately replaces ``faster_whisper.audio.decode_audio``. That helper calls
+    ``av.open(..., metadata_errors=...)``, a keyword PyAV removed in v15, while
+    faster-whisper still only declares ``av>=11``; pinning av backwards is not an option
+    because older releases ship no wheels for current Python versions. Decoding here keeps
+    the local provider working regardless of the installed av version -- and is cheaper,
+    since the receiver already hands us raw PCM.
+    """
+    import numpy as np
+
+    frame_width = 2 * channels
+    usable = len(pcm_data) - (len(pcm_data) % frame_width)
+    if usable <= 0:
+        return np.zeros(0, dtype=np.float32)
+
+    interleaved = np.frombuffer(pcm_data[:usable], dtype="<i2")
+    # Downmix to mono in float32 so the channel average cannot overflow.
+    mono = interleaved.reshape(-1, channels).astype(np.float32).mean(axis=1) / 32768.0
+
+    if sample_rate != WHISPER_SAMPLE_RATE and mono.size:
+        # Low-pass before decimating, otherwise content above the new Nyquist
+        # frequency aliases back into the speech band and hurts accuracy.
+        decimation = sample_rate / WHISPER_SAMPLE_RATE
+        taps = int(max(4.0, decimation * 8.0)) | 1
+        window = np.hamming(taps).astype(np.float32)
+        cutoff = 0.5 / decimation
+        offsets = np.arange(taps, dtype=np.float32) - (taps - 1) / 2.0
+        kernel = window * 2.0 * cutoff * np.sinc(2.0 * cutoff * offsets)
+        kernel /= kernel.sum()
+        filtered = np.convolve(mono, kernel, mode="same")
+
+        target = round(mono.size / decimation)
+        positions = np.arange(target, dtype=np.float32) * decimation
+        mono = np.interp(positions, np.arange(filtered.size, dtype=np.float32), filtered)
+
+    return np.clip(mono, -1.0, 1.0).astype(np.float32)
+
 
 def _local_backend_available() -> bool:
     """True when faster-whisper can be imported, matching Hermes' local-backend probe."""
@@ -66,15 +114,16 @@ class Transcriber:
         self._local_model: Any | None = None
 
     async def transcribe_pcm(self, pcm_data: bytes, *, user_id: int) -> str:
+        if self.provider == "local":
+            # No temporary file needed: decode in-process and feed whisper directly.
+            return await asyncio.to_thread(self._transcribe_local, pcm_data)
         directory = str(self.temp_dir) if self.temp_dir else None
         fd, filename = tempfile.mkstemp(prefix=f"speaker-{user_id}-", suffix=".wav", dir=directory)
         os.close(fd)
         path = Path(filename)
         try:
             VoiceReceiver.pcm_to_wav(pcm_data, path)
-            if self.provider == "openai":
-                return await self._transcribe_openai(path)
-            return await asyncio.to_thread(self._transcribe_local, path)
+            return await self._transcribe_openai(path)
         finally:
             path.unlink(missing_ok=True)
 
@@ -91,7 +140,7 @@ class Transcriber:
         text = result if isinstance(result, str) else getattr(result, "text", "")
         return str(text).strip()
 
-    def _transcribe_local(self, path: Path) -> str:
+    def _transcribe_local(self, pcm_data: bytes) -> str:
         if self._local_model is None:
             try:
                 from faster_whisper import WhisperModel
@@ -100,8 +149,11 @@ class Transcriber:
                     "Local STT requires: uv sync --extra local"
                 ) from error
             self._local_model = WhisperModel(self.model, device="auto", compute_type="auto")
+        audio = pcm_to_whisper_audio(pcm_data)
+        if not audio.size:
+            return ""
         options = {"vad_filter": True}
         if self.language:
             options["language"] = self.language
-        segments, _ = self._local_model.transcribe(str(path), **options)
+        segments, _ = self._local_model.transcribe(audio, **options)
         return " ".join(segment.text.strip() for segment in segments).strip()

@@ -95,3 +95,44 @@ def test_explicit_provider_is_honoured_over_autodetect(monkeypatch):
     monkeypatch.setattr(transcription, "_local_backend_available", lambda: True)
 
     assert resolve_provider("openai") == "openai"
+
+
+def test_pcm_to_whisper_audio_downmixes_and_resamples_without_av():
+    """The local path must not depend on faster-whisper's av-based decode_audio.
+
+    av>=15 dropped the ``metadata_errors`` kwarg that faster_whisper.audio.decode_audio
+    passes, and older av has no wheels on recent Pythons, so we decode in-process.
+    """
+    import math
+    import struct
+
+    from discord_voice_transcriber.transcription import (
+        WHISPER_SAMPLE_RATE,
+        pcm_to_whisper_audio,
+    )
+
+    seconds = 0.5
+    frames = int(48_000 * seconds)
+    # 440 Hz tone, identical in both channels, as interleaved stereo s16le.
+    samples = []
+    for i in range(frames):
+        value = int(16_000 * math.sin(2 * math.pi * 440 * i / 48_000))
+        samples.extend((value, value))
+    pcm = struct.pack(f"<{len(samples)}h", *samples)
+
+    audio = pcm_to_whisper_audio(pcm)
+
+    assert audio.ndim == 1, "whisper expects mono"
+    assert audio.dtype.name == "float32"
+    expected = int(frames * WHISPER_SAMPLE_RATE / 48_000)
+    assert abs(len(audio) - expected) <= 2
+    assert audio.max() <= 1.0 and audio.min() >= -1.0
+    assert float(abs(audio).mean()) > 0.01, "tone should survive resampling"
+
+
+def test_pcm_to_whisper_audio_handles_empty_and_odd_input():
+    from discord_voice_transcriber.transcription import pcm_to_whisper_audio
+
+    assert len(pcm_to_whisper_audio(b"")) == 0
+    # A trailing partial frame must be dropped, not crash.
+    assert len(pcm_to_whisper_audio(b"\x01\x00\x02\x00\x03")) >= 0

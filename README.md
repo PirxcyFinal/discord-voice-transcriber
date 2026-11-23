@@ -158,6 +158,33 @@ chosen independently:
 Other models Hermes accepts for OpenAI (`gpt-4o-mini-transcribe`,
 `gpt-4o-transcribe`) still work via `STT_MODEL` if you prefer them.
 
+### Running keyless (no API key)
+
+Yes, transcription can run with no API key at all:
+
+```bash
+uv sync --extra local
+DISCORD_BOT_TOKEN=... uv run discord-voice-transcriber
+```
+
+With the `local` extra installed, `STT_PROVIDER=auto` resolves to `local` and
+runs faster-whisper `base` entirely on your machine. No `OPENAI_API_KEY` is
+read, and no audio leaves the host.
+
+A Discord bot token is still required — that is Discord's own gateway
+authentication, not a speech-to-text key. So the bot is keyless for *transcription*,
+never for connecting to Discord.
+
+Notes on the local path:
+
+- Audio is decoded in-process from the receiver's raw PCM straight into a 16 kHz
+  mono float32 array, so no temporary WAV is written and no API call is made.
+- This bypasses `faster_whisper.audio.decode_audio` on purpose. It calls
+  `av.open(..., metadata_errors=...)`, a keyword PyAV removed in v15, while
+  faster-whisper still only declares `av>=11`. Pinning av backwards is not
+  viable because older releases ship no wheels for current Python versions.
+- On Apple Silicon, ctranslate2 may suggest its MPS backend for extra speed.
+
 ## Development
 
 ```bash
