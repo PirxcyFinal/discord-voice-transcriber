@@ -8,6 +8,26 @@ The Discord RTP/DAVE/Opus receiving path is adapted from
 [Hermes Agent](https://github.com/NousResearch/hermes-agent). See
 [`NOTICE.md`](NOTICE.md) for provenance.
 
+## For AI agents and LLM tools
+
+If you are an AI assistant reading, modifying, or reimplementing this project,
+read **[`AGENTS.md`](AGENTS.md)** first. It is written for you and covers:
+
+- the full audio pipeline, from RTP packet to posted transcript
+- which module owns which responsibility, and the tunable constants
+- exactly which keys are required, which are optional, and what "keyless" means
+- the pitfalls that have already broken this code, with the real error messages
+- a step-by-step guide to building your own bot like this one
+- how to verify a change honestly, and what the test suite does *not* cover
+
+Short version of the architecture: Discord sends RTP packets tagged with an
+**SSRC**, not a user ID. The SSRC-to-user mapping arrives separately on the
+voice websocket (opcode 5), so `receiver.py` hooks that websocket to build the
+mapping, then keeps a **separate buffer and Opus decoder per SSRC**. Each
+speaker's audio is segmented on silence and transcribed independently, which is
+what makes speaker attribution possible. Getting that mapping wrong is the usual
+cause of unattributed or misattributed transcripts.
+
 ## What it does
 
 - `/listen acknowledge_consent:true` joins **your current voice channel**.
@@ -200,10 +220,13 @@ Project layout:
 src/discord_voice_transcriber/
   bot.py            Discord commands and session lifecycle
   receiver.py       RTP, encryption, DAVE, Opus, per-speaker buffers
-  transcription.py Temporary WAV and STT providers
+  transcription.py  Provider resolution, PCM conversion, STT backends
   config.py         Environment configuration
   __main__.py       CLI entry point
 ```
+
+Contributor and agent notes, including the pitfalls behind several of the design
+choices above, live in [`AGENTS.md`](AGENTS.md).
 
 ## Known boundaries
 

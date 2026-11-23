@@ -28,8 +28,13 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    settings = Settings.from_env()
-    bot = build_bot(settings)
+    try:
+        settings = Settings.from_env()
+        bot = build_bot(settings)
+    except ValueError as error:
+        # Configuration problems are user errors, not crashes: report them in one
+        # actionable line instead of a traceback.
+        raise SystemExit(f"Configuration error: {error}") from error
     if args.check:
         print(
             f"Configuration valid: provider={bot.transcriber.provider} "
